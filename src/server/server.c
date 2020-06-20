@@ -46,11 +46,12 @@
 
 static struct service *services;
 
-enum shutdown_reason {
-	CONTINUE_MAIN_LOOP,			/* stay in main event loop */
-	SHUTDOWN_REQUESTED,			/* set by shutdown command; exit the event loop and quit the debugger */
-	SHUTDOWN_WITH_ERROR_CODE,	/* set by shutdown command; quit with non-zero return code */
-	SHUTDOWN_WITH_SIGNAL_CODE	/* set by sig_handler; exec shutdown then exit with signal as return code */
+enum shutdown_reason
+{
+	CONTINUE_MAIN_LOOP,		  /* stay in main event loop */
+	SHUTDOWN_REQUESTED,		  /* set by shutdown command; exit the event loop and quit the debugger */
+	SHUTDOWN_WITH_ERROR_CODE, /* set by shutdown command; quit with non-zero return code */
+	SHUTDOWN_WITH_SIGNAL_CODE /* set by sig_handler; exec shutdown then exit with signal as return code */
 };
 static enum shutdown_reason shutdown_openocd = CONTINUE_MAIN_LOOP;
 
@@ -80,7 +81,8 @@ static int add_connection(struct service *service, struct command_context *cmd_c
 	c->priv = NULL;
 	c->next = NULL;
 
-	if (service->type == CONNECTION_TCP) {
+	if (service->type == CONNECTION_TCP)
+	{
 		address_size = sizeof(c->sin);
 
 		c->fd = accept(service->fd, (struct sockaddr *)&service->sin, &address_size);
@@ -91,22 +93,25 @@ static int add_connection(struct service *service, struct command_context *cmd_c
 		 *
 		 * Ignore errors from this fn as it probably just means less performance
 		 */
-		setsockopt(c->fd,	/* socket affected */
-			IPPROTO_TCP,			/* set option at TCP level */
-			TCP_NODELAY,			/* name of option */
-			(char *)&flag,			/* the cast is historical cruft */
-			sizeof(int));			/* length of option value */
+		setsockopt(c->fd,		  /* socket affected */
+				   IPPROTO_TCP,	  /* set option at TCP level */
+				   TCP_NODELAY,	  /* name of option */
+				   (char *)&flag, /* the cast is historical cruft */
+				   sizeof(int));  /* length of option value */
 
 		LOG_INFO("accepting '%s' connection on tcp/%s", service->name, service->port);
 		retval = service->new_connection(c);
-		if (retval != ERROR_OK) {
+		if (retval != ERROR_OK)
+		{
 			close_socket(c->fd);
 			LOG_ERROR("attempted '%s' connection rejected", service->name);
 			command_done(c->cmd_ctx);
 			free(c);
 			return retval;
 		}
-	} else if (service->type == CONNECTION_STDINOUT) {
+	}
+	else if (service->type == CONNECTION_STDINOUT)
+	{
 		c->fd = service->fd;
 		c->fd_out = fileno(stdout);
 
@@ -120,13 +125,16 @@ static int add_connection(struct service *service, struct command_context *cmd_c
 
 		LOG_INFO("accepting '%s' connection from pipe", service->name);
 		retval = service->new_connection(c);
-		if (retval != ERROR_OK) {
+		if (retval != ERROR_OK)
+		{
 			LOG_ERROR("attempted '%s' connection rejected", service->name);
 			command_done(c->cmd_ctx);
 			free(c);
 			return retval;
 		}
-	} else if (service->type == CONNECTION_PIPE) {
+	}
+	else if (service->type == CONNECTION_PIPE)
+	{
 		c->fd = service->fd;
 		/* do not check for new connections again on stdin */
 		service->fd = -1;
@@ -134,7 +142,8 @@ static int add_connection(struct service *service, struct command_context *cmd_c
 		char *out_file = alloc_printf("%so", service->port);
 		c->fd_out = open(out_file, O_WRONLY);
 		free(out_file);
-		if (c->fd_out == -1) {
+		if (c->fd_out == -1)
+		{
 			LOG_ERROR("could not open %s", service->port);
 			command_done(c->cmd_ctx);
 			free(c);
@@ -143,7 +152,8 @@ static int add_connection(struct service *service, struct command_context *cmd_c
 
 		LOG_INFO("accepting '%s' connection from pipe %s", service->name, service->port);
 		retval = service->new_connection(c);
-		if (retval != ERROR_OK) {
+		if (retval != ERROR_OK)
+		{
 			LOG_ERROR("attempted '%s' connection rejected", service->name);
 			command_done(c->cmd_ctx);
 			free(c);
@@ -168,12 +178,15 @@ static int remove_connection(struct service *service, struct connection *connect
 	struct connection *c;
 
 	/* find connection */
-	while ((c = *p)) {
-		if (c->fd == connection->fd) {
+	while ((c = *p))
+	{
+		if (c->fd == connection->fd)
+		{
 			service->connection_closed(c);
 			if (service->type == CONNECTION_TCP)
 				close_socket(c->fd);
-			else if (service->type == CONNECTION_PIPE) {
+			else if (service->type == CONNECTION_PIPE)
+			{
 				/* The service will listen to the pipe again */
 				c->service->fd = c->fd;
 			}
@@ -205,12 +218,12 @@ static void free_service(struct service *c)
 }
 
 int add_service(char *name,
-	const char *port,
-	int max_connections,
-	new_connection_handler_t new_connection_handler,
-	input_handler_t input_handler,
-	connection_closed_handler_t connection_closed_handler,
-	void *priv)
+				const char *port,
+				int max_connections,
+				new_connection_handler_t new_connection_handler,
+				input_handler_t input_handler,
+				connection_closed_handler_t connection_closed_handler,
+				void *priv)
 {
 	struct service *c, **p;
 	struct hostent *hp;
@@ -220,7 +233,7 @@ int add_service(char *name,
 
 	c->name = strdup(name);
 	c->port = strdup(port);
-	c->max_connections = 1;	/* Only TCP/IP ports can support more than one connection */
+	c->max_connections = 1; /* Only TCP/IP ports can support more than one connection */
 	c->fd = -1;
 	c->connections = NULL;
 	c->new_connection = new_connection_handler;
@@ -231,31 +244,36 @@ int add_service(char *name,
 	long portnumber;
 	if (strcmp(c->port, "pipe") == 0)
 		c->type = CONNECTION_STDINOUT;
-	else {
+	else
+	{
 		char *end;
 		portnumber = strtol(c->port, &end, 0);
-		if (!*end && (parse_long(c->port, &portnumber) == ERROR_OK)) {
+		if (!*end && (parse_long(c->port, &portnumber) == ERROR_OK))
+		{
 			c->portnumber = portnumber;
 			c->type = CONNECTION_TCP;
-		} else
+		}
+		else
 			c->type = CONNECTION_PIPE;
 	}
 
-	if (c->type == CONNECTION_TCP) {
+	if (c->type == CONNECTION_TCP)
+	{
 		c->max_connections = max_connections;
 
 		c->fd = socket(AF_INET, SOCK_STREAM, 0);
-		if (c->fd == -1) {
+		if (c->fd == -1)
+		{
 			LOG_ERROR("error creating socket: %s", strerror(errno));
 			free_service(c);
 			return ERROR_FAIL;
 		}
 
 		setsockopt(c->fd,
-			SOL_SOCKET,
-			SO_REUSEADDR,
-			(void *)&so_reuseaddr_option,
-			sizeof(int));
+				   SOL_SOCKET,
+				   SO_REUSEADDR,
+				   (void *)&so_reuseaddr_option,
+				   sizeof(int));
 
 		socket_nonblock(c->fd);
 
@@ -264,9 +282,11 @@ int add_service(char *name,
 
 		if (bindto_name == NULL)
 			c->sin.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-		else {
+		else
+		{
 			hp = gethostbyname(bindto_name);
-			if (hp == NULL) {
+			if (hp == NULL)
+			{
 				LOG_ERROR("couldn't resolve bindto address: %s", bindto_name);
 				close_socket(c->fd);
 				free_service(c);
@@ -276,7 +296,8 @@ int add_service(char *name,
 		}
 		c->sin.sin_port = htons(c->portnumber);
 
-		if (bind(c->fd, (struct sockaddr *)&c->sin, sizeof(c->sin)) == -1) {
+		if (bind(c->fd, (struct sockaddr *)&c->sin, sizeof(c->sin)) == -1)
+		{
 			LOG_ERROR("couldn't bind %s to socket on port %d: %s", name, c->portnumber, strerror(errno));
 			close_socket(c->fd);
 			free_service(c);
@@ -285,18 +306,19 @@ int add_service(char *name,
 
 #ifndef _WIN32
 		int segsize = 65536;
-		setsockopt(c->fd, IPPROTO_TCP, TCP_MAXSEG,  &segsize, sizeof(int));
+		setsockopt(c->fd, IPPROTO_TCP, TCP_MAXSEG, &segsize, sizeof(int));
 #endif
 		int window_size = 128 * 1024;
 
 		/* These setsockopt()s must happen before the listen() */
 
 		setsockopt(c->fd, SOL_SOCKET, SO_SNDBUF,
-			(char *)&window_size, sizeof(window_size));
+				   (char *)&window_size, sizeof(window_size));
 		setsockopt(c->fd, SOL_SOCKET, SO_RCVBUF,
-			(char *)&window_size, sizeof(window_size));
+				   (char *)&window_size, sizeof(window_size));
 
-		if (listen(c->fd, 1) == -1) {
+		if (listen(c->fd, 1) == -1)
+		{
 			LOG_ERROR("couldn't listen on socket: %s", strerror(errno));
 			close_socket(c->fd);
 			free_service(c);
@@ -308,8 +330,10 @@ int add_service(char *name,
 		socklen_t addr_in_size = sizeof(addr_in);
 		if (getsockname(c->fd, (struct sockaddr *)&addr_in, &addr_in_size) == 0)
 			LOG_INFO("Listening on port %hu for %s connections",
-				 ntohs(addr_in.sin_port), name);
-	} else if (c->type == CONNECTION_STDINOUT) {
+					 ntohs(addr_in.sin_port), name);
+	}
+	else if (c->type == CONNECTION_STDINOUT)
+	{
 		c->fd = fileno(stdin);
 
 #ifdef _WIN32
@@ -323,7 +347,9 @@ int add_service(char *name,
 #else
 		socket_nonblock(c->fd);
 #endif
-	} else if (c->type == CONNECTION_PIPE) {
+	}
+	else if (c->type == CONNECTION_PIPE)
+	{
 #ifdef _WIN32
 		/* we currenty do not support named pipes under win32
 		 * so exit openocd for now */
@@ -333,7 +359,8 @@ int add_service(char *name,
 #else
 		/* Pipe we're reading from */
 		c->fd = open(c->port, O_RDONLY | O_NONBLOCK);
-		if (c->fd == -1) {
+		if (c->fd == -1)
+		{
 			LOG_ERROR("could not open %s", c->port);
 			free_service(c);
 			return ERROR_FAIL;
@@ -355,7 +382,8 @@ static void remove_connections(struct service *service)
 
 	connection = service->connections;
 
-	while (connection) {
+	while (connection)
+	{
 		struct connection *tmp;
 
 		tmp = connection->next;
@@ -371,8 +399,10 @@ int remove_service(const char *name, const char *port)
 
 	prev = services;
 
-	for (tmp = services; tmp; prev = tmp, tmp = tmp->next) {
-		if (!strcmp(tmp->name, name) && !strcmp(tmp->port, port)) {
+	for (tmp = services; tmp; prev = tmp, tmp = tmp->next)
+	{
+		if (!strcmp(tmp->name, name) && !strcmp(tmp->port, port))
+		{
 			remove_connections(tmp);
 
 			if (tmp == services)
@@ -398,7 +428,8 @@ static int remove_services(void)
 	struct service *c = services;
 
 	/* loop service */
-	while (c) {
+	while (c)
+	{
 		struct service *next = c->next;
 
 		remove_connections(c);
@@ -406,7 +437,8 @@ static int remove_services(void)
 		if (c->name)
 			free(c->name);
 
-		if (c->type == CONNECTION_PIPE) {
+		if (c->type == CONNECTION_PIPE)
+		{
 			if (c->fd != -1)
 				close(c->fd);
 		}
@@ -446,14 +478,17 @@ int server_loop(struct command_context *command_context)
 		LOG_ERROR("couldn't set SIGPIPE to SIG_IGN");
 #endif
 
-	while (shutdown_openocd == CONTINUE_MAIN_LOOP) {
+	while (shutdown_openocd == CONTINUE_MAIN_LOOP)
+	{
 		/* monitor sockets for activity */
 		fd_max = 0;
 		FD_ZERO(&read_fds);
 
 		/* add service and connection fds to read_fds */
-		for (service = services; service; service = service->next) {
-			if (service->fd != -1) {
+		for (service = services; service; service = service->next)
+		{
+			if (service->fd != -1)
+			{
 				/* listen for new connections */
 				FD_SET(service->fd, &read_fds);
 
@@ -461,10 +496,12 @@ int server_loop(struct command_context *command_context)
 					fd_max = service->fd;
 			}
 
-			if (service->connections) {
+			if (service->connections)
+			{
 				struct connection *c;
 
-				for (c = service->connections; c; c = c->next) {
+				for (c = service->connections; c; c = c->next)
+				{
 					/* check for activity on the connection */
 					FD_SET(c->fd, &read_fds);
 					if (c->fd > fd_max)
@@ -475,12 +512,15 @@ int server_loop(struct command_context *command_context)
 
 		struct timeval tv;
 		tv.tv_sec = 0;
-		if (poll_ok) {
+		if (poll_ok)
+		{
 			/* we're just polling this iteration, this is faster on embedded
 			 * hosts */
 			tv.tv_usec = 0;
 			retval = socket_select(fd_max + 1, &read_fds, NULL, NULL, &tv);
-		} else {
+		}
+		else
+		{
 			/* Every 100ms, can be changed with "poll_period" command */
 			tv.tv_usec = polling_period * 1000;
 			/* Only while we're sleeping we'll let others run */
@@ -490,14 +530,16 @@ int server_loop(struct command_context *command_context)
 			openocd_sleep_postlude();
 		}
 
-		if (retval == -1) {
+		if (retval == -1)
+		{
 #ifdef _WIN32
 
 			errno = WSAGetLastError();
 
 			if (errno == WSAEINTR)
 				FD_ZERO(&read_fds);
-			else {
+			else
+			{
 				LOG_ERROR("error during select: %s", strerror(errno));
 				return ERROR_FAIL;
 			}
@@ -505,25 +547,29 @@ int server_loop(struct command_context *command_context)
 
 			if (errno == EINTR)
 				FD_ZERO(&read_fds);
-			else {
+			else
+			{
 				LOG_ERROR("error during select: %s", strerror(errno));
 				return ERROR_FAIL;
 			}
 #endif
 		}
 
-		if (retval == 0) {
+		if (retval == 0)
+		{
 			/* We only execute these callbacks when there was nothing to do or we timed
 			 *out */
 			target_call_timer_callbacks();
 			process_jim_events(command_context);
 
-			FD_ZERO(&read_fds);	/* eCos leaves read_fds unchanged in this case!  */
+			FD_ZERO(&read_fds); /* eCos leaves read_fds unchanged in this case!  */
 
 			/* We timed out/there was nothing to do, timeout rather than poll next time
 			 **/
 			poll_ok = false;
-		} else {
+		}
+		else
+		{
 			/* There was something to do, next time we'll just poll */
 			poll_ok = true;
 		}
@@ -535,20 +581,23 @@ int server_loop(struct command_context *command_context)
 		 */
 		poll_ok = poll_ok || target_got_message();
 
-		for (service = services; service; service = service->next) {
+		for (service = services; service; service = service->next)
+		{
 			/* handle new connections on listeners */
-			if ((service->fd != -1)
-				&& (FD_ISSET(service->fd, &read_fds))) {
+			if ((service->fd != -1) && (FD_ISSET(service->fd, &read_fds)))
+			{
 				if (service->max_connections != 0)
 					add_connection(service, command_context);
-				else {
-					if (service->type == CONNECTION_TCP) {
+				else
+				{
+					if (service->type == CONNECTION_TCP)
+					{
 						struct sockaddr_in sin;
 						socklen_t address_size = sizeof(sin);
 						int tmp_fd;
 						tmp_fd = accept(service->fd,
-								(struct sockaddr *)&service->sin,
-								&address_size);
+										(struct sockaddr *)&service->sin,
+										&address_size);
 						close_socket(tmp_fd);
 					}
 					LOG_INFO(
@@ -558,23 +607,28 @@ int server_loop(struct command_context *command_context)
 			}
 
 			/* handle activity on connections */
-			if (service->connections) {
+			if (service->connections)
+			{
 				struct connection *c;
 
-				for (c = service->connections; c; ) {
-					if ((c->fd >= 0 && FD_ISSET(c->fd, &read_fds)) || c->input_pending) {
+				for (c = service->connections; c;)
+				{
+					if ((c->fd >= 0 && FD_ISSET(c->fd, &read_fds)) || c->input_pending)
+					{
 						retval = service->input(c);
-						if (retval != ERROR_OK) {
+						if (retval != ERROR_OK)
+						{
 							struct connection *next = c->next;
 							if (service->type == CONNECTION_PIPE ||
-									service->type == CONNECTION_STDINOUT) {
+								service->type == CONNECTION_STDINOUT)
+							{
 								/* if connection uses a pipe then
 								 * shutdown openocd on error */
 								shutdown_openocd = SHUTDOWN_REQUESTED;
 							}
 							remove_connection(service, c);
 							LOG_INFO("dropped '%s' connection",
-								service->name);
+									 service->name);
 							c = next;
 							continue;
 						}
@@ -586,7 +640,8 @@ int server_loop(struct command_context *command_context)
 
 #ifdef _WIN32
 		MSG msg;
-		while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
+		while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE))
+		{
 			if (msg.message == WM_QUIT)
 				shutdown_openocd = SHUTDOWN_WITH_SIGNAL_CODE;
 		}
@@ -603,14 +658,15 @@ int server_loop(struct command_context *command_context)
 void sig_handler(int sig)
 {
 	/* store only first signal that hits us */
-	if (shutdown_openocd == CONTINUE_MAIN_LOOP) {
+	if (shutdown_openocd == CONTINUE_MAIN_LOOP)
+	{
 		shutdown_openocd = SHUTDOWN_WITH_SIGNAL_CODE;
 		last_signal = sig;
 		LOG_DEBUG("Terminating on Signal %d", sig);
-	} else
+	}
+	else
 		LOG_DEBUG("Ignored extra Signal %d", sig);
 }
-
 
 #ifdef _WIN32
 BOOL WINAPI ControlHandler(DWORD dwCtrlType)
@@ -630,7 +686,6 @@ static void sigkey_handler(int sig)
 }
 #endif
 
-
 int server_preinit(void)
 {
 	/* this currently only calls WSAStartup on native win32 systems
@@ -643,7 +698,8 @@ int server_preinit(void)
 
 	wVersionRequested = MAKEWORD(2, 2);
 
-	if (WSAStartup(wVersionRequested, &wsaData) != 0) {
+	if (WSAStartup(wVersionRequested, &wsaData) != 0)
+	{
 		LOG_ERROR("Failed to Open Winsock");
 		return ERROR_FAIL;
 	}
@@ -657,7 +713,7 @@ int server_preinit(void)
 	signal(SIGHUP, sig_handler);
 	signal(SIGPIPE, sig_handler);
 	signal(SIGQUIT, sigkey_handler);
-	signal(SIGINT, sigkey_handler);
+	// signal(SIGINT, sigkey_handler);
 #endif
 	signal(SIGTERM, sig_handler);
 	signal(SIGABRT, sig_handler);
@@ -674,7 +730,8 @@ int server_init(struct command_context *cmd_ctx)
 
 	ret = telnet_init("Open On-Chip Debugger");
 
-	if (ret != ERROR_OK) {
+	if (ret != ERROR_OK)
+	{
 		remove_services();
 		return ret;
 	}
@@ -718,7 +775,8 @@ void exit_on_signal(int sig)
 
 int connection_write(struct connection *connection, const void *data, int len)
 {
-	if (len == 0) {
+	if (len == 0)
+	{
 		/* successful no-op. Sockets and pipes behave differently here... */
 		return 0;
 	}
@@ -743,8 +801,10 @@ COMMAND_HANDLER(handle_shutdown_command)
 
 	shutdown_openocd = SHUTDOWN_REQUESTED;
 
-	if (CMD_ARGC == 1) {
-		if (!strcmp(CMD_ARGV[0], "error")) {
+	if (CMD_ARGC == 1)
+	{
+		if (!strcmp(CMD_ARGV[0], "error"))
+		{
 			shutdown_openocd = SHUTDOWN_WITH_ERROR_CODE;
 			return ERROR_FAIL;
 		}
@@ -767,16 +827,17 @@ COMMAND_HANDLER(handle_poll_period_command)
 
 COMMAND_HANDLER(handle_bindto_command)
 {
-	switch (CMD_ARGC) {
-		case 0:
-			command_print(CMD, "bindto name: %s", bindto_name);
-			break;
-		case 1:
-			free(bindto_name);
-			bindto_name = strdup(CMD_ARGV[0]);
-			break;
-		default:
-			return ERROR_COMMAND_SYNTAX_ERROR;
+	switch (CMD_ARGC)
+	{
+	case 0:
+		command_print(CMD, "bindto name: %s", bindto_name);
+		break;
+	case 1:
+		free(bindto_name);
+		bindto_name = strdup(CMD_ARGV[0]);
+		break;
+	default:
+		return ERROR_COMMAND_SYNTAX_ERROR;
 	}
 	return ERROR_OK;
 }
@@ -802,10 +863,9 @@ static const struct command_registration server_command_handlers[] = {
 		.mode = COMMAND_CONFIG,
 		.usage = "[name]",
 		.help = "Specify address by name on which to listen for "
-			"incoming TCP/IP connections",
+				"incoming TCP/IP connections",
 	},
-	COMMAND_REGISTRATION_DONE
-};
+	COMMAND_REGISTRATION_DONE};
 
 int server_register_commands(struct command_context *cmd_ctx)
 {
@@ -826,41 +886,44 @@ int server_register_commands(struct command_context *cmd_ctx)
 
 COMMAND_HELPER(server_port_command, unsigned short *out)
 {
-	switch (CMD_ARGC) {
-		case 0:
-			command_print(CMD, "%d", *out);
-			break;
-		case 1:
-		{
-			uint16_t port;
-			COMMAND_PARSE_NUMBER(u16, CMD_ARGV[0], port);
-			*out = port;
-			break;
-		}
-		default:
-			return ERROR_COMMAND_SYNTAX_ERROR;
+	switch (CMD_ARGC)
+	{
+	case 0:
+		command_print(CMD, "%d", *out);
+		break;
+	case 1:
+	{
+		uint16_t port;
+		COMMAND_PARSE_NUMBER(u16, CMD_ARGV[0], port);
+		*out = port;
+		break;
+	}
+	default:
+		return ERROR_COMMAND_SYNTAX_ERROR;
 	}
 	return ERROR_OK;
 }
 
 COMMAND_HELPER(server_pipe_command, char **out)
 {
-	switch (CMD_ARGC) {
-		case 0:
-			command_print(CMD, "%s", *out);
-			break;
-		case 1:
+	switch (CMD_ARGC)
+	{
+	case 0:
+		command_print(CMD, "%s", *out);
+		break;
+	case 1:
+	{
+		if (CMD_CTX->mode == COMMAND_EXEC)
 		{
-			if (CMD_CTX->mode == COMMAND_EXEC) {
-				LOG_WARNING("unable to change server port after init");
-				return ERROR_COMMAND_ARGUMENT_INVALID;
-			}
-			free(*out);
-			*out = strdup(CMD_ARGV[0]);
-			break;
+			LOG_WARNING("unable to change server port after init");
+			return ERROR_COMMAND_ARGUMENT_INVALID;
 		}
-		default:
-			return ERROR_COMMAND_SYNTAX_ERROR;
+		free(*out);
+		*out = strdup(CMD_ARGV[0]);
+		break;
+	}
+	default:
+		return ERROR_COMMAND_SYNTAX_ERROR;
 	}
 	return ERROR_OK;
 }

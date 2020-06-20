@@ -19,7 +19,8 @@
 #ifndef OPENOCD_PLD_XILINX_BIT_H
 #define OPENOCD_PLD_XILINX_BIT_H
 
-struct xilinx_bit_file {
+struct xilinx_bit_file
+{
 	uint8_t unknown_header[13];
 	uint8_t *source_file;
 	uint8_t *part_name;
@@ -27,6 +28,9 @@ struct xilinx_bit_file {
 	uint8_t *time;
 	uint32_t length;
 	uint8_t *data;
+	uint8_t rolling_delta;
+	uint32_t dwc_length;
+	uint32_t cipher_start;
 };
 
 int xilinx_read_bit_file(struct xilinx_bit_file *bit_file, const char *filename);

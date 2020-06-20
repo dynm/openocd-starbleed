@@ -26,16 +26,16 @@
 
 #include <sys/stat.h>
 
-
 static int read_section(FILE *input_file, int length_size, char section,
-	uint32_t *buffer_length, uint8_t **buffer)
+						uint32_t *buffer_length, uint8_t **buffer)
 {
 	uint8_t length_buffer[4];
 	int length;
 	char section_char;
 	int read_count;
 
-	if ((length_size != 2) && (length_size != 4)) {
+	if ((length_size != 2) && (length_size != 4))
+	{
 		LOG_ERROR("BUG: length_size neither 2 nor 4");
 		return ERROR_PLD_FILE_LOAD_FAILED;
 	}
@@ -53,7 +53,7 @@ static int read_section(FILE *input_file, int length_size, char section,
 
 	if (length_size == 4)
 		length = be_to_h_u32(length_buffer);
-	else	/* (length_size == 2) */
+	else /* (length_size == 2) */
 		length = be_to_h_u16(length_buffer);
 
 	if (buffer_length)
@@ -77,29 +77,34 @@ int xilinx_read_bit_file(struct xilinx_bit_file *bit_file, const char *filename)
 	if (!filename || !bit_file)
 		return ERROR_COMMAND_SYNTAX_ERROR;
 
-	if (stat(filename, &input_stat) == -1) {
+	if (stat(filename, &input_stat) == -1)
+	{
 		LOG_ERROR("couldn't stat() %s: %s", filename, strerror(errno));
 		return ERROR_PLD_FILE_LOAD_FAILED;
 	}
 
-	if (S_ISDIR(input_stat.st_mode)) {
+	if (S_ISDIR(input_stat.st_mode))
+	{
 		LOG_ERROR("%s is a directory", filename);
 		return ERROR_PLD_FILE_LOAD_FAILED;
 	}
 
-	if (input_stat.st_size == 0) {
+	if (input_stat.st_size == 0)
+	{
 		LOG_ERROR("Empty file %s", filename);
 		return ERROR_PLD_FILE_LOAD_FAILED;
 	}
 
 	input_file = fopen(filename, "rb");
-	if (input_file == NULL) {
+	if (input_file == NULL)
+	{
 		LOG_ERROR("couldn't open %s: %s", filename, strerror(errno));
 		return ERROR_PLD_FILE_LOAD_FAILED;
 	}
 
 	read_count = fread(bit_file->unknown_header, 1, 13, input_file);
-	if (read_count != 13) {
+	if (read_count != 13)
+	{
 		LOG_ERROR("couldn't read unknown_header from file '%s'", filename);
 		return ERROR_PLD_FILE_LOAD_FAILED;
 	}
@@ -119,8 +124,26 @@ int xilinx_read_bit_file(struct xilinx_bit_file *bit_file, const char *filename)
 	if (read_section(input_file, 4, 'e', &bit_file->length, &bit_file->data) != ERROR_OK)
 		return ERROR_PLD_FILE_LOAD_FAILED;
 
+	bit_file->cipher_start = 0;
+	bit_file->dwc_length = 0;
+	bit_file->rolling_delta = 0x00;
+	// find dwc 30034001
+	if (bit_file->length > 512)
+	{
+		for (int i = 0; i < 0xE0; i++)
+		{
+			if (bit_file->data[i] == 0x30 && bit_file->data[i + 1] == 0x03 && bit_file->data[i + 2] == 0x40 && bit_file->data[i + 3] == 0x01)
+			{
+				bit_file->cipher_start = i + 8;
+				bit_file->dwc_length = be_to_h_u32(&bit_file->data[i + 4]); // len in word
+				bit_file->rolling_delta = bit_file->data[i + 8 + 0x3b];
+				break;
+			}
+		}
+	}
+
 	LOG_DEBUG("bit_file: %s %s %s,%s %" PRIi32 "", bit_file->source_file, bit_file->part_name,
-		bit_file->date, bit_file->time, bit_file->length);
+			  bit_file->date, bit_file->time, bit_file->length);
 
 	fclose(input_file);
 
