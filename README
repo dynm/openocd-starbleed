@@ -30,6 +30,9 @@ This README file contains an overview of the following topics:
 Quickstart for the impatient
 ============================
 
+Reproduce starbleed:
+openocd -f ./tcl/interface/jlink.cfg -f ./tcl/cpld/xilinx-xc7.cfg -c 'adapter speed 20000; init; virtex2 starbleed 0 ./target_encrypted.bit ./malicious_template.bit ./output_without_first_16bytes_hmac_ipad.bin; exit'
+
 If you have a popular board then just start OpenOCD with its config,
 e.g.:
 
