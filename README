@@ -30,8 +30,17 @@ This README file contains an overview of the following topics:
 Quickstart for the impatient
 ============================
 
-Reproduce starbleed:
+PoC of Starbleed (https://www.usenix.org/system/files/sec20fall_ender_prepub.pdf The Unpatchable Silicon: A Full Break of the Bitstream Encryption of Xilinx 7-Series FPGAs):
+You can use any jtag adapter supported by OpenOCD.
 openocd -f ./tcl/interface/jlink.cfg -f ./tcl/cpld/xilinx-xc7.cfg -c 'adapter speed 20000; init; virtex2 starbleed 0 ./target_encrypted.bit ./output_without_first_16bytes_hmac_ipad.bin; exit'
+
+According to my test, I found the configuration footer will affect the wbstar read out, the result could be wrong in some conditions.
+For checking if the read out is correct, we need reading same position twice with different masks (details below), if the result is wrong,
+I use a simple chianed FNV hash to randomize the configuration footer.
+
+About masks:
+If read out failed, the result will be some value likes 0x00000000, in order to differ from the true 0x00000000, 
+we can use CBC malleability to make read out value xord with mask by adding mask at previous block.
 
 If you have a popular board then just start OpenOCD with its config,
 e.g.:
