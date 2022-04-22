@@ -33,6 +33,10 @@ Quickstart for the impatient
 PoC of Starbleed (https://www.usenix.org/system/files/sec20fall_ender_prepub.pdf The Unpatchable Silicon: A Full Break of the Bitstream Encryption of Xilinx 7-Series FPGAs):
 You can use any jtag adapter supported by OpenOCD.
 openocd -f ./tcl/interface/jlink.cfg -f ./tcl/cpld/xilinx-xc7.cfg -c 'adapter speed 20000; init; virtex2 starbleed 0 ./target_encrypted.bit ./output_without_first_16bytes_hmac_ipad.bin; exit'
+Once openocd produced the decrypted bitstream fabric part, you can use the python script to re-encrypt the bitstream with your own password.
+[Re-Encrypt](https://gist.github.com/dynm/ccb63f847f397cd90e544517ea5cae07)
+It reads 2 files as input and output 1 bitstream file.
+The first input is the file produced from previous step, the second file is the original encrypted bitstream which contains configuration footer and header as a reference.
 
 According to my test, I found the configuration footer will affect the wbstar read out, the result could be wrong in some conditions.
 For checking if the read out is correct, we need reading same position twice with different masks (details below), if the result is wrong,
